@@ -11,6 +11,7 @@ $ ./gpg-fingerprint-filter-gpu --help
   <pattern>                   Key pattern to match, for example 'X{8}|(AB){4}'
   <output>                    Save secret key to this path
   -a, --algorithm <ALGO>      PGP key algorithm [default: rsa]
+  -M, --match-mode <MODE>     Match mode: prefix, suffix, either, both [default: prefix]
   -t, --time-offset <N>       Max key timestamp offset [default: 15552000]
   -w, --thread-per-block <N>  CUDA thread number per block [default: 512]
   -j, --gpg-thread <N>        Number of threads to generate keys [default: 12]
@@ -20,7 +21,10 @@ $ ./gpg-fingerprint-filter-gpu --help
 
 ### Pattern
 
-- Only matches end part of a string.
+- By default it matches the beginning of a fingerprint.
+- Use `--match-mode suffix` to match the end of a fingerprint.
+- Use `--match-mode either` to match either the beginning or the end.
+- Use `--match-mode both` to require a match at both the beginning and the end.
 - A hex digit means itself.
 - Other Latin alphabets (`g` to `z`) are to match any hex digit.
 - `{N}` to repeat previous digit or group for N times.
@@ -29,10 +33,11 @@ $ ./gpg-fingerprint-filter-gpu --help
 
 Examples:
 
-- `deadbeef` equals to regex `deadbeef$`
-- `x{8}` equals to regex `([0-9a-f])\1{7}$`
-- `(xy){4}` equals to regex `([0-9a-f][0-9a-f])\1{3}$`
-- `xxxxa{4}` equals to regex `([0-9a-f])\1{3}aaaa$`
+- `deadbeef` equals to regex `^deadbeef` in the default `prefix` mode
+- `deadbeef --match-mode suffix` equals to regex `deadbeef$`
+- `deadbeef --match-mode both` equals to regex `^deadbeef.*deadbeef$`
+- `x{8}` equals to regex `^([0-9a-f])\1{7}` in the default `prefix` mode
+- `(xy){4}` equals to regex `^([0-9a-f][0-9a-f])\1{3}` in the default `prefix` mode
 
 ### Import Key
 

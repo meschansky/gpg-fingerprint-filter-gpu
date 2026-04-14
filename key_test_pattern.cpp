@@ -7,7 +7,7 @@
 #include <nvrtc.h>
 #define NVRTC_CALL(func, args...) error_wrapper<nvrtcResult>(#func, (func)(args), NVRTC_SUCCESS, nvrtcGetErrorString)
 
-static std::string compile_single_pattern(const std::string &pattern) {
+static std::string compile_single_pattern(const std::string &pattern, MatchMode mode) {
     std::vector<int> tmp_out;
     std::map<char, int> symbol_map;
 
@@ -77,35 +77,44 @@ static std::string compile_single_pattern(const std::string &pattern) {
         };
     }
 
-    int offset = 40 - tmp_out.size();
-    if ((offset < 0) || (bra != -1 && ket == -1))
+    if ((tmp_out.size() > 40) || (bra != -1 && ket == -1))
         return "";
 
-    std::stringstream ss;
-    for (auto i = 0u; i < tmp_out.size(); i++) {
-        auto item = tmp_out[i];
+    auto emit_pattern = [&](int offset) {
+        std::stringstream ss;
+        for (auto i = 0u; i < tmp_out.size(); i++) {
+            auto item = tmp_out[i];
 
-        if (item != static_cast<int>(i)) {
-            ss << "w[" << i + offset << "] == ";
+            if (item != static_cast<int>(i)) {
+                ss << "w[" << i + offset << "] == ";
 
-            if (item < 0)
-                ss << tmp_out[i] + 100;
-            else
-                ss << "w[" << item + offset << "]";
+                if (item < 0)
+                    ss << tmp_out[i] + 100;
+                else
+                    ss << "w[" << item + offset << "]";
 
-            ss << " && ";
+                ss << " && ";
+            }
         }
-    }
 
-    std::string ret = ss.str();
+        std::string ret = ss.str();
+        return ret.empty() ? std::string("1") : ret.substr(0, ret.size() - 4);
+    };
 
-    if (ret == "")
-        return "1";
-    else
-        return ret.substr(0, ret.size() - 4);
+    if (mode == MatchMode::Prefix)
+        return emit_pattern(0);
+
+    int suffix_offset = 40 - tmp_out.size();
+    if (mode == MatchMode::Suffix)
+        return emit_pattern(suffix_offset);
+
+    if (mode == MatchMode::Both)
+        return "(" + emit_pattern(0) + ") && (" + emit_pattern(suffix_offset) + ")";
+
+    return "(" + emit_pattern(0) + ") || (" + emit_pattern(suffix_offset) + ")";
 }
 
-static std::string compile_patterns(const std::string &input) {
+static std::string compile_patterns(const std::string &input, MatchMode mode) {
     std::stringstream ss;
     std::string::size_type pos;
     std::string buffer = input + "|";
@@ -135,7 +144,7 @@ void pattern_check(u32 *result";
 
     while ((pos = buffer.find("|")) != std::string::npos) {
         auto pattern = buffer.substr(0, pos);
-        auto code = compile_single_pattern(pattern);
+        auto code = compile_single_pattern(pattern, mode);
 
         if (code == "")
             return "";
@@ -150,8 +159,8 @@ void pattern_check(u32 *result";
     return ss.str();
 }
 
-void CudaManager::load_patterns(const std::string &input) {
-    auto cuda_src = compile_patterns(input);
+void CudaManager::load_patterns(const std::string &input, MatchMode mode) {
+    auto cuda_src = compile_patterns(input, mode);
 
     nvrtcProgram prog;
     NVRTC_CALL(nvrtcCreateProgram, &prog, cuda_src.c_str(), NULL, 0, NULL, NULL);
@@ -159,6 +168,17 @@ void CudaManager::load_patterns(const std::string &input) {
     int dev_major, dev_minor;
     CU_CALL(cuDeviceGetAttribute, &dev_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, cu_device);
     CU_CALL(cuDeviceGetAttribute, &dev_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, cu_device);
+
+    // Clamp the virtual architecture to one NVRTC shipped with the toolkit
+    // actually supports. Newer drivers can still JIT the generated PTX for
+    // newer GPUs at module load time.
+    constexpr int kMaxNvrtcMajor = 9;
+    constexpr int kMaxNvrtcMinor = 0;
+    if (dev_major > kMaxNvrtcMajor ||
+        (dev_major == kMaxNvrtcMajor && dev_minor > kMaxNvrtcMinor)) {
+        dev_major = kMaxNvrtcMajor;
+        dev_minor = kMaxNvrtcMinor;
+    }
 
     std::string arch = "-arch=compute_";
     arch += std::to_string(dev_major);
