@@ -1,56 +1,91 @@
 ## gpg-fingerprint-filter-gpu
 
-Generate an OpenPGP key whose fingerprint matches a specific pattern.
+Generate an OpenPGP key whose fingerprint matches a prefix filter, a suffix filter, or both.
 
-Get your lucky key! CUDA powered, so fast!
+Get your lucky key. CUDA powered, so fast.
 
 ```
 $ ./gpg-fingerprint-filter-gpu --help
-  gpg-fingerprint-filter-gpu [OPTIONS] <pattern> <output>
+  gpg-fingerprint-filter-gpu [OPTIONS] <output>
 
-  <pattern>                   Key pattern to match, for example 'X{8}|(AB){4}'
-  <output>                    Save secret key to this path
+  <output>                    Save the secret key(s) to this folder
   -a, --algorithm <ALGO>      PGP key algorithm [default: rsa]
-  -M, --match-mode <MODE>     Match mode: prefix, suffix, either, both [default: prefix]
+  -p, --prefix-pattern <PAT>  Fingerprint prefix filter in custom pattern syntax
+  -s, --suffix-pattern <PAT>  Fingerprint suffix filter in custom pattern syntax
   -t, --time-offset <N>       Max key timestamp offset [default: 15552000]
   -w, --thread-per-block <N>  CUDA thread number per block [default: 512]
-  -j, --gpg-thread <N>        Number of threads to generate keys [default: 12]
-  -b, --base-time <N>         Base key timestamp (0 means current time) [default: 0]
+  -j, --gpg-thread <N>        Number of threads to generate keys [default: # of CPUs]
+  -b, --base-time <N>         Base key timestamp in UNIX epoch [default: now]
+  -m, --batch-mode <Y/N>      Continue to generate keys even if a match is found [default: N]
   -h, --help
 ```
 
-### Pattern
+### Filter Syntax
 
-- By default it matches the beginning of a fingerprint.
-- Use `--match-mode suffix` to match the end of a fingerprint.
-- Use `--match-mode either` to match either the beginning or the end.
-- Use `--match-mode both` to require a match at both the beginning and the end.
-- A hex digit means itself.
-- Other Latin alphabets (`g` to `z`) are to match any hex digit.
-- `{N}` to repeat previous digit or group for N times.
-- `(PATTERN)` a group pattern.
-- Use `|` to split multiple patterns.
+Each filter uses a small custom pattern language. It is not regex.
+
+Supported syntax:
+
+- Hex literals: `0-9`, `A-F`
+- Variable hex digits: other letters like `X`, `Y`, `Z`
+- Repetition: `{N}`
+- Grouping: `(PATTERN)`
+- Alternation: `|`
+
+Semantics:
+
+- Hex literals match themselves.
+- Non-hex letters match any hex digit.
+- Reusing the same non-hex letter means the same hex digit must appear again.
+- `{N}` repeats the previous digit or group.
+- `|` separates alternatives within the same prefix or suffix filter.
+- Groups cannot be nested.
 
 Examples:
 
-- `deadbeef` equals to regex `^deadbeef` in the default `prefix` mode
-- `deadbeef --match-mode suffix` equals to regex `deadbeef$`
-- `deadbeef --match-mode both` equals to regex `^deadbeef.*deadbeef$`
-- `x{8}` equals to regex `^([0-9a-f])\1{7}` in the default `prefix` mode
-- `(xy){4}` equals to regex `^([0-9a-f][0-9a-f])\1{3}` in the default `prefix` mode
+- `DEADBEEF` means the literal hex string `DEADBEEF`
+- `X{8}` means 8 identical hex digits
+- `(XY){4}` means the same 2-digit hex sequence repeated 4 times
+- `1234|ABCD` means either `1234` or `ABCD`
+
+### Examples
+
+Prefix only:
+
+```bash
+./gpg-fingerprint-filter-gpu --prefix-pattern 000000 out
+```
+
+Suffix only:
+
+```bash
+./gpg-fingerprint-filter-gpu --suffix-pattern 000000 out
+```
+
+Different prefix and suffix:
+
+```bash
+./gpg-fingerprint-filter-gpu --prefix-pattern 1234 --suffix-pattern 5678 out
+```
+
+Mirrored ends are now just explicit prefix and suffix filters:
+
+```bash
+./gpg-fingerprint-filter-gpu --prefix-pattern 123456 --suffix-pattern 654321 out
+```
 
 ### Import Key
 
 Import the generated private key:
 
-```
+```bash
 $ gpg --allow-non-selfsigned-uid --import private.pgp
 ```
 
 The private key file doesn't have a self-signed UID on it. GPG will display `NONAME` as the default UID.
 You need to add a valid UID and remove the default one to make the key usable:
 
-```
+```bash
 $ gpg --edit-key <KEY_FINGERPRINT>
 gpg> adduid
 Real name: Your Name Here
@@ -61,6 +96,12 @@ gpg> deluid
 gpg> save
 ```
 
+Or use:
+
+```bash
+./make-valid-gpg-key.sh <input-key> "Your Name Here" your_email@example.com
+```
+
 ### Merge Key
 
 Since cv25519 cannot be used as primary key, you need to merge the generated key with an existing key:
@@ -69,10 +110,10 @@ Reference: https://security.stackexchange.com/questions/32935/migrating-gpg-mast
 
 TLDR:
 
-1. Primary key should be created earlier than subkey. 
-2. To persevere the subkey fingerprint, you need perserve the subkey creation time.
+1. Primary key should be created earlier than subkey.
+2. To preserve the subkey fingerprint, you need preserve the subkey creation time.
 
-```
+```bash
 gpg -k --with-colons
 gpg --with-keygrip -k
 gpg --expert --faked-system-time="[sub key timestamp]\!" --ignore-time-conflict --edit-key [master key id]

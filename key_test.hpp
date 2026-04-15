@@ -14,13 +14,6 @@
 using u32 = std::uint32_t;
 using u8 = std::uint8_t;
 
-enum class MatchMode {
-    Prefix,
-    Suffix,
-    Either,
-    Both,
-};
-
 class CudaManager {
 private:
     u32 *h[5] = {};
@@ -48,7 +41,7 @@ public:
 
     ~CudaManager();
 
-    void load_patterns(const std::string &input, MatchMode mode);
+    void load_patterns(const std::string &prefix_input, const std::string &suffix_input);
     void test_key(const std::vector<u8> &key);
     u32 get_result_time() const;
 };

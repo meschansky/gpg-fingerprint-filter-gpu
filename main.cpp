@@ -22,10 +22,10 @@ void signal_handler(int sig) {
 }
 
 struct Config {
-    std::string pattern;
+    std::string prefix_pattern;
+    std::string suffix_pattern;
     std::string output;
     std::string algorithm;
-    MatchMode match_mode;
     unsigned long time_offset;
     unsigned long thread_per_block;
     unsigned long gpg_thread;
@@ -45,7 +45,7 @@ int _main(const Config &conf) {
 
     GPGWorker key_worker(conf.gpg_thread, conf.algorithm);
     CudaManager manager(num_block, thread_per_block, conf.base_time);
-    manager.load_patterns(conf.pattern, conf.match_mode);
+    manager.load_patterns(conf.prefix_pattern, conf.suffix_pattern);
 
     unsigned long long count = 0ULL;
     auto t0 = std::chrono::steady_clock::now();
@@ -91,17 +91,16 @@ int _main(const Config &conf) {
 }
 
 void print_help(std::map<std::string, std::string> arg_map) {
-    printf("  gpg-fingerprint-filter-gpu [OPTIONS] <pattern> <output>\n\n");
-    printf("  <pattern>                   "
-           "Fingerprint pattern to match, for example 'X{8}|(AB){4}'\n");
+    printf("  gpg-fingerprint-filter-gpu [OPTIONS] <output>\n\n");
     printf("  <output>                    "
            "Save the secret key(s) to this folder\n");
     printf("  -a, --algorithm <ALGO>      "
            "PGP key algorithm [default: %s]\n",
            arg_map["algorithm"].c_str());
-    printf("  -M, --match-mode <MODE>     "
-           "Fingerprint match mode: prefix, suffix, either, both [default: %s]\n",
-           arg_map["match-mode"].c_str());
+    printf("  -p, --prefix-pattern <PAT>  "
+           "Fingerprint prefix filter in custom pattern syntax\n");
+    printf("  -s, --suffix-pattern <PAT>  "
+           "Fingerprint suffix filter in custom pattern syntax\n");
     printf("  -b, --base-time <N>         "
            "Base key timestamp in UNIX epoch [default: %s]\n",
            "now");
@@ -121,10 +120,11 @@ void print_help(std::map<std::string, std::string> arg_map) {
 }
 
 int main(int argc, char* argv[]) {
-    const std::string positional_args[] = { "pattern", "output" };
+    const std::string positional_args[] = { "output" };
     const std::string named_args[][2] = {
         { "a", "algorithm" },
-        { "M", "match-mode" },
+        { "p", "prefix-pattern" },
+        { "s", "suffix-pattern" },
         { "b", "base-time" },
         { "t", "time-offset" },
         { "w", "thread-per-block" },
@@ -135,7 +135,6 @@ int main(int argc, char* argv[]) {
     // default args
     std::map<std::string, std::string> arg_map_default;
     arg_map_default["algorithm"] = "rsa";
-    arg_map_default["match-mode"] = "prefix";
     arg_map_default["base-time"] = std::to_string(time(NULL));
     arg_map_default["time-offset"] = "15552000";
     arg_map_default["thread-per-block"] = "512";
@@ -185,28 +184,20 @@ int main(int argc, char* argv[]) {
 
     Config config;
     try {
-        config.pattern = arg_map.at("pattern");
         config.output = arg_map.at("output");
         config.algorithm = arg_map.at("algorithm");
-        if (arg_map.at("match-mode") == "prefix") {
-            config.match_mode = MatchMode::Prefix;
-        } else if (arg_map.at("match-mode") == "suffix") {
-            config.match_mode = MatchMode::Suffix;
-        } else if (arg_map.at("match-mode") == "either") {
-            config.match_mode = MatchMode::Either;
-        } else if (arg_map.at("match-mode") == "both") {
-            config.match_mode = MatchMode::Both;
-        } else {
-            throw std::invalid_argument("bad match mode");
-        }
+        config.prefix_pattern = arg_map.count("prefix-pattern") ? arg_map.at("prefix-pattern") : "";
+        config.suffix_pattern = arg_map.count("suffix-pattern") ? arg_map.at("suffix-pattern") : "";
         config.base_time = std::stoul(arg_map.at("base-time"));
         config.time_offset = std::stoul(arg_map.at("time-offset"));
         config.thread_per_block = std::stoul(arg_map.at("thread-per-block"));
         config.gpg_thread = std::stoul(arg_map.at("gpg-thread"));
         config.batch_mode = arg_map.at("batch-mode")[0] == 'Y' ||
                             arg_map.at("batch-mode")[0] == 'y';
+        if (config.prefix_pattern.empty() && config.suffix_pattern.empty())
+            throw std::invalid_argument("missing filters");
     } catch (const std::invalid_argument &e) {
-        fprintf(stderr, "Invalid argument value!\n\n");
+        fprintf(stderr, "Invalid argument value or missing filter!\n\n");
         print_help(arg_map_default);
         return EXIT_FAILURE;
     } catch (const std::out_of_range &e) {

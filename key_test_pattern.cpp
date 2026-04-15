@@ -3,11 +3,12 @@
 #include <map>
 #include <memory>
 #include <sstream>
+#include <vector>
 
 #include <nvrtc.h>
 #define NVRTC_CALL(func, args...) error_wrapper<nvrtcResult>(#func, (func)(args), NVRTC_SUCCESS, nvrtcGetErrorString)
 
-static std::string compile_single_pattern(const std::string &pattern, MatchMode mode) {
+static std::vector<int> parse_pattern_tokens(const std::string &pattern) {
     std::vector<int> tmp_out;
     std::map<char, int> symbol_map;
 
@@ -26,23 +27,20 @@ static std::string compile_single_pattern(const std::string &pattern, MatchMode 
                 if (bra == -1)
                     bra = tmp_out.size();
                 else
-                    return "";
-
+                    return {};
                 break;
-            };
+            }
             case ')': {
                 if (bra != -1)
                     ket = tmp_out.size();
                 else
-                    return "";
-
+                    return {};
                 break;
             }
             case '{': {
                 unsigned long num = strtoul(++p, (char**)&p, 10);
-
                 if (*p != '}' || num == 0)
-                    return "";
+                    return {};
 
                 int i0, i1;
                 if (ket == -1) {
@@ -61,64 +59,78 @@ static std::string compile_single_pattern(const std::string &pattern, MatchMode 
                 break;
             }
             default: {
-                if (isdigit(*p) || isalpha(*p)) {
-                    char symbol = toupper(*p);
+                if (!isdigit(*p) && !isalpha(*p))
+                    return {};
 
-                    if (symbol_map.count(symbol) == 0)
-                        symbol_map[symbol] = tmp_out.size();
+                char symbol = toupper(*p);
+                if (symbol_map.count(symbol) == 0)
+                    symbol_map[symbol] = tmp_out.size();
 
-                    tmp_out.push_back(symbol_map[symbol]);
-                } else
-                    return "";
+                tmp_out.push_back(symbol_map[symbol]);
 
                 if (ket != -1)
                     bra = ket = -1;
             }
-        };
+        }
     }
 
-    if ((tmp_out.size() > 40) || (bra != -1 && ket == -1))
-        return "";
+    if (tmp_out.size() > 40 || (bra != -1 && ket == -1))
+        return {};
 
-    auto emit_pattern = [&](int offset) {
-        std::stringstream ss;
-        for (auto i = 0u; i < tmp_out.size(); i++) {
-            auto item = tmp_out[i];
-
-            if (item != static_cast<int>(i)) {
-                ss << "w[" << i + offset << "] == ";
-
-                if (item < 0)
-                    ss << tmp_out[i] + 100;
-                else
-                    ss << "w[" << item + offset << "]";
-
-                ss << " && ";
-            }
-        }
-
-        std::string ret = ss.str();
-        return ret.empty() ? std::string("1") : ret.substr(0, ret.size() - 4);
-    };
-
-    if (mode == MatchMode::Prefix)
-        return emit_pattern(0);
-
-    int suffix_offset = 40 - tmp_out.size();
-    if (mode == MatchMode::Suffix)
-        return emit_pattern(suffix_offset);
-
-    if (mode == MatchMode::Both)
-        return "(" + emit_pattern(0) + ") && (" + emit_pattern(suffix_offset) + ")";
-
-    return "(" + emit_pattern(0) + ") || (" + emit_pattern(suffix_offset) + ")";
+    return tmp_out;
 }
 
-static std::string compile_patterns(const std::string &input, MatchMode mode) {
+static std::string emit_pattern(const std::vector<int> &tokens, int offset) {
+    std::stringstream ss;
+    for (auto i = 0u; i < tokens.size(); i++) {
+        auto item = tokens[i];
+        if (item == static_cast<int>(i))
+            continue;
+
+        ss << "w[" << i + offset << "] == ";
+        if (item < 0)
+            ss << tokens[i] + 100;
+        else
+            ss << "w[" << item + offset << "]";
+
+        ss << " && ";
+    }
+
+    std::string ret = ss.str();
+    return ret.empty() ? std::string("1") : ret.substr(0, ret.size() - 4);
+}
+
+static std::string compile_pattern_expr(const std::string &input, bool suffix_side) {
+    if (input.empty())
+        return "1";
+
     std::stringstream ss;
     std::string::size_type pos;
     std::string buffer = input + "|";
 
+    while ((pos = buffer.find("|")) != std::string::npos) {
+        auto pattern = buffer.substr(0, pos);
+        auto tokens = parse_pattern_tokens(pattern);
+        if (tokens.empty())
+            return "";
+
+        int offset = suffix_side ? 40 - static_cast<int>(tokens.size()) : 0;
+        ss << "(" << emit_pattern(tokens, offset) << ") || ";
+        buffer.erase(0, pos + 1);
+    }
+
+    std::string ret = ss.str();
+    return ret.empty() ? std::string("1") : ret.substr(0, ret.size() - 4);
+}
+
+static std::string compile_patterns(const std::string &prefix_input,
+                                    const std::string &suffix_input) {
+    auto prefix_expr = compile_pattern_expr(prefix_input, false);
+    auto suffix_expr = compile_pattern_expr(suffix_input, true);
+    if (prefix_expr.empty() || suffix_expr.empty())
+        return "";
+
+    std::stringstream ss;
     ss << "\
 typedef unsigned int u32; \n\
 extern \"C\" __global__ \n\
@@ -140,27 +152,13 @@ void pattern_check(u32 *result";
         ss << "  w[" << i * 8 + 7 << "] = tmp & 0x0F;\n";
     }
 
-    ss << "  if (";
-
-    while ((pos = buffer.find("|")) != std::string::npos) {
-        auto pattern = buffer.substr(0, pos);
-        auto code = compile_single_pattern(pattern, mode);
-
-        if (code == "")
-            return "";
-
-        ss << "(" << code << ") || ";
-        buffer.erase(0, pos + 1);
-    }
-
-    ss.seekp(-4, std::ios_base::end);
-    ss << ") *result = index;\n}\n";
-
+    ss << "  if ((" << prefix_expr << ") && (" << suffix_expr << ")) *result = index;\n}\n";
     return ss.str();
 }
 
-void CudaManager::load_patterns(const std::string &input, MatchMode mode) {
-    auto cuda_src = compile_patterns(input, mode);
+void CudaManager::load_patterns(const std::string &prefix_input,
+                                const std::string &suffix_input) {
+    auto cuda_src = compile_patterns(prefix_input, suffix_input);
 
     nvrtcProgram prog;
     NVRTC_CALL(nvrtcCreateProgram, &prog, cuda_src.c_str(), NULL, 0, NULL, NULL);
@@ -209,7 +207,7 @@ void CudaManager::load_patterns(const std::string &input, MatchMode mode) {
 
     CU_CALL(cuMemAlloc, &cu_result, sizeof(uint32_t));
     CU_CALL(cuMemsetD32, cu_result, UINT32_MAX, 1);
-};
+}
 
 void CudaManager::gpu_pattern_check() {
     void *args[] = {&cu_result, h + 0, h + 1, h + 2, h + 3, h + 4};
