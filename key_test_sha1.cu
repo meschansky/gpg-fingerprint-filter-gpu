@@ -43,7 +43,7 @@ void sha1_main_loop(u32 w[16], u32 &a, u32 &b, u32 &c, u32 &d, u32 &e) {
 }
 
 __global__ static
-void proc_chunk0(u32 t0, u32* __restrict__ h0, u32* __restrict__ h1, u32* __restrict__ h2, u32* __restrict__ h3, u32* __restrict__ h4) {
+void proc_chunk0(u32 t0, u32 valid_count, u32* __restrict__ h0, u32* __restrict__ h1, u32* __restrict__ h2, u32* __restrict__ h3, u32* __restrict__ h4) {
     constexpr u32 a0 = 0x67452301;
     constexpr u32 b0 = 0xEFCDAB89;
     constexpr u32 c0 = 0x98BADCFE;
@@ -51,6 +51,8 @@ void proc_chunk0(u32 t0, u32* __restrict__ h0, u32* __restrict__ h1, u32* __rest
     constexpr u32 e0 = 0xC3D2E1F0;
 
     size_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index >= valid_count)
+        return;
     u32 a, b, c, d, e;
 
     u32 w[16];
@@ -73,8 +75,10 @@ void proc_chunk0(u32 t0, u32* __restrict__ h0, u32* __restrict__ h1, u32* __rest
 }
 
 __global__ static
-void proc_chunk(size_t chunk_idx, u32 *h0, u32 *h1, u32 *h2, u32 *h3, u32 *h4) {
+void proc_chunk(size_t chunk_idx, u32 valid_count, u32 *h0, u32 *h1, u32 *h2, u32 *h3, u32 *h4) {
     size_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index >= valid_count)
+        return;
     u32 a, b, c, d, e;
 
     u32 w[16];
@@ -96,9 +100,9 @@ void proc_chunk(size_t chunk_idx, u32 *h0, u32 *h1, u32 *h2, u32 *h3, u32 *h4) {
 }
 
 void CudaManager::gpu_proc_chunk(u32 n_chunk, u32 key_time0) const {
-    proc_chunk0<<<n_block_, thread_per_block_>>>(key_time0, h[0], h[1], h[2], h[3], h[4]);
+    proc_chunk0<<<n_block_, thread_per_block_>>>(key_time0, valid_count_, h[0], h[1], h[2], h[3], h[4]);
     for (u32 i = 1; i < n_chunk; i++)
-        proc_chunk<<<n_block_, thread_per_block_>>>(i, h[0], h[1], h[2], h[3], h[4]);
+        proc_chunk<<<n_block_, thread_per_block_>>>(i, valid_count_, h[0], h[1], h[2], h[3], h[4]);
 }
 
 u32 CudaManager::load_key(const std::vector<u8> &pubkey) const {

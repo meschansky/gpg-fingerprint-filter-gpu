@@ -124,7 +124,8 @@ static std::string compile_pattern_expr(const std::string &input, bool suffix_si
 }
 
 static std::string compile_patterns(const std::string &prefix_input,
-                                    const std::string &suffix_input) {
+                                    const std::string &suffix_input,
+                                    int valid_count) {
     auto prefix_expr = compile_pattern_expr(prefix_input, false);
     auto suffix_expr = compile_pattern_expr(suffix_input, true);
     if (prefix_expr.empty() || suffix_expr.empty())
@@ -140,6 +141,7 @@ void pattern_check(u32 *result";
 
     ss << ") {\n\
   size_t index = blockIdx.x * blockDim.x + threadIdx.x; \n\
+  if (index >= " << valid_count << "U) return; \n\
   u32 tmp; \n\
   unsigned char w[40]; \n";
 
@@ -158,7 +160,7 @@ void pattern_check(u32 *result";
 
 void CudaManager::load_patterns(const std::string &prefix_input,
                                 const std::string &suffix_input) {
-    auto cuda_src = compile_patterns(prefix_input, suffix_input);
+    auto cuda_src = compile_patterns(prefix_input, suffix_input, valid_count_);
 
     nvrtcProgram prog;
     NVRTC_CALL(nvrtcCreateProgram, &prog, cuda_src.c_str(), NULL, 0, NULL, NULL);

@@ -17,6 +17,8 @@ $ ./gpg-fingerprint-filter-gpu --help
   -j, --gpg-thread <N>        Number of threads to generate keys [default: # of CPUs]
   -b, --base-time <N>         Base key timestamp in UNIX epoch [default: now]
   -m, --batch-mode <Y/N>      Continue to generate keys even if a match is found [default: N]
+  -c, --checkpoint-file <P>   Save resumable checkpoint state to this file
+  -i, --checkpoint-interval <N> Checkpoint update interval in seconds [default: 60]
   -h, --help
 ```
 
@@ -73,6 +75,28 @@ Mirrored ends are now just explicit prefix and suffix filters:
 ```bash
 ./gpg-fingerprint-filter-gpu --prefix-pattern 123456 --suffix-pattern 654321 out
 ```
+
+### Checkpointing
+
+Use an explicit checkpoint file to resume a long-running search:
+
+```bash
+./gpg-fingerprint-filter-gpu \
+  --algorithm ed25519 \
+  --prefix-pattern 000000 \
+  --suffix-pattern 000000 \
+  --checkpoint-file search.ckpt \
+  out
+```
+
+If the checkpoint file already exists and the stored config matches the current
+command, the search resumes automatically. If you change an explicit setting
+such as the algorithm or filters, the program exits with a checkpoint mismatch
+error instead of silently starting a different search.
+
+Checkpoint files contain private key material for the in-flight key being
+searched. Protect them like secret key files. They are written with `0600`
+permissions and are deleted automatically after a successful non-batch match.
 
 ### Search Timing Estimates
 

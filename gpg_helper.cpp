@@ -103,6 +103,20 @@ GPGKey::GPGKey(const std::string &algorithm) {
     creation_time = 0;
 }
 
+GPGKey::GPGKey(const GPGKeySnapshot &snapshot) {
+    if (snapshot.pk_algo != PK_RSA &&
+        snapshot.pk_algo != PK_ECDH &&
+        snapshot.pk_algo != PK_ECDSA &&
+        snapshot.pk_algo != PK_EDDSA) {
+        throw std::runtime_error("unsupported snapshot algorithm");
+    }
+
+    pk_algo = static_cast<openpgp_pk_algos>(snapshot.pk_algo);
+    creation_time = snapshot.creation_time;
+    private_params = snapshot.private_params;
+    public_params = snapshot.public_params;
+}
+
 std::vector<uint8_t> GPGKey::load_fpr_hash_packet() const {
     std::vector<uint8_t> buf;
     uint16_t octet_count;
@@ -196,6 +210,15 @@ std::vector<uint8_t> GPGKey::load_seckey_packet() const {
     buf.push_back(csum & 0xFF);
 
     return buf;
+}
+
+GPGKeySnapshot GPGKey::snapshot() const {
+    GPGKeySnapshot ret;
+    ret.pk_algo = pk_algo;
+    ret.creation_time = creation_time;
+    ret.private_params = private_params;
+    ret.public_params = public_params;
+    return ret;
 }
 
 void GPGKey::set_creation_time(uint32_t timestamp) {

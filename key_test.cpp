@@ -6,8 +6,11 @@ const char *cuGetErrorName_wrapper(CUresult err) {
     return msg;
 }
 
-CudaManager::CudaManager(int n_block, int thread_per_block, unsigned long base_time):
-        n_block_(n_block), thread_per_block_(thread_per_block), base_time_(base_time) {
+CudaManager::CudaManager(int n_block, int thread_per_block, int valid_count, unsigned long base_time):
+        n_block_(n_block),
+        thread_per_block_(thread_per_block),
+        valid_count_(valid_count),
+        base_time_(base_time) {
     int batch_size = n_block * thread_per_block;
 
     CU_CALL(cuInit, 0);

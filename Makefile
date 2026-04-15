@@ -19,7 +19,10 @@ key_test.o: key_test.cpp
 gpg_helper.o: gpg_helper.cpp
 	$(NVCC) -c -o $@ $(NVCCFLAGS) $(INC) $^
 
-gpg-fingerprint-filter-gpu: main.cpp key_test.o key_test_sha1.o key_test_pattern.o gpg_helper.o
+checkpoint.o: checkpoint.cpp
+	$(NVCC) -c -o $@ $(NVCCFLAGS) $(INC) $^
+
+gpg-fingerprint-filter-gpu: main.cpp checkpoint.o key_test.o key_test_sha1.o key_test_pattern.o gpg_helper.o
 	$(NVCC) -o $@ $(NVCCFLAGS) $(LIBS) $(INC) $^
 
 clean:

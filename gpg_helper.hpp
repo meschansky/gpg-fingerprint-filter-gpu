@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <thread>
+#include <string>
 
 #include <cstdint>
 
@@ -11,6 +12,13 @@
 #include "safe_stack.hpp"
 #include "error_check.hpp"
 #define GCRY_CALL(func, args...) error_wrapper<gcry_error_t>(#func, (func)(args), GPG_ERR_NO_ERROR, gcry_strerror)
+
+struct GPGKeySnapshot {
+    uint32_t pk_algo;
+    uint32_t creation_time;
+    std::vector<std::vector<uint8_t>> private_params;
+    std::vector<std::vector<uint8_t>> public_params;
+};
 
 class GPGKey {
 private:
@@ -27,6 +35,7 @@ private:
     std::vector<std::vector<uint8_t>> public_params;
 public:
     explicit GPGKey(const std::string &algorithm);
+    explicit GPGKey(const GPGKeySnapshot &snapshot);
 
     GPGKey(const GPGKey&) = delete;
     GPGKey& operator=(const GPGKey&) = delete;
@@ -35,6 +44,7 @@ public:
 
     std::vector<uint8_t> load_fpr_hash_packet() const;
     std::vector<uint8_t> load_seckey_packet() const;
+    GPGKeySnapshot snapshot() const;
     void set_creation_time(uint32_t timestamp);
 };
 

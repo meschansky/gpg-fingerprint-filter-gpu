@@ -21,6 +21,7 @@ private:
 
     int n_block_;
     int thread_per_block_;
+    int valid_count_;
     unsigned long base_time_;
 
     u32 load_key(const std::vector<u8> &pubkey) const;
@@ -34,7 +35,7 @@ private:
     CUdeviceptr cu_result = 0;
 
 public:
-    CudaManager(int n_block, int thread_per_block, unsigned long base_time);
+    CudaManager(int n_block, int thread_per_block, int valid_count, unsigned long base_time);
 
     CudaManager(const CudaManager&) = delete;
     CudaManager& operator= (const CudaManager&) = delete;
