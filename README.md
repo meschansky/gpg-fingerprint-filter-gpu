@@ -128,6 +128,15 @@ Or use:
 ./make-valid-gpg-key.sh <input-key> "Your Name Here" your_email@example.com
 ```
 
+The script prints the resulting fingerprint and a final key summary in both
+`--with-colons` and human-readable GnuPG formats.
+
+For an `ed25519` vanity primary key, add an encryption subkey during conversion:
+
+```bash
+./make-valid-gpg-key.sh --add-encryption-subkey <input-key> "Your Name Here" your_email@example.com
+```
+
 ### Merge Key
 
 Since cv25519 cannot be used as primary key, you need to merge the generated key with an existing key:
