@@ -74,6 +74,32 @@ Mirrored ends are now just explicit prefix and suffix filters:
 ./gpg-fingerprint-filter-gpu --prefix-pattern 123456 --suffix-pattern 654321 out
 ```
 
+### Search Timing Estimates
+
+For independent literal prefix and suffix filters, the expected search space is:
+
+```text
+16^(prefix_hex_digits + suffix_hex_digits)
+```
+
+Expected time is:
+
+```text
+16^(prefix_hex_digits + suffix_hex_digits) / hashes_per_second
+```
+
+At a measured rate of about `13.8e9 hashes / sec`, the average time for all-zero prefix and suffix searches is roughly:
+
+| Prefix + suffix | Total constrained hex digits | Expected time |
+|---|---:|---:|
+| `0000...0000` | 8 | `0.31 s` |
+| `00000...00000` | 10 | `79.5 s` |
+| `000000...000000` | 12 | `5.66 h` |
+| `0000000...0000000` | 14 | `90.5 h` |
+| `00000000...00000000` | 16 | `1449 h` |
+
+These are averages, not guarantees. A run may finish much earlier or much later.
+
 ### Import Key
 
 Import the generated private key:
