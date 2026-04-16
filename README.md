@@ -161,6 +161,18 @@ For an `ed25519` vanity primary key, add an encryption subkey during conversion:
 ./make-valid-gpg-key.sh --add-encryption-subkey <input-key> "Your Name Here" your_email@example.com
 ```
 
+To attach a separately generated `cv25519` vanity key as the encryption subkey:
+
+```bash
+./make-valid-gpg-key.sh \
+  --add-existing-encryption-subkey <cv25519-key> \
+  <ed25519-key> "Your Name Here" your_email@example.com
+```
+
+This imports both generated secret keys into a temporary keyring, reads the
+`cv25519` keygrip and creation time, and uses GnuPG's existing-key flow with
+`--faked-system-time` so the added subkey keeps its original fingerprint.
+
 ### Merge Key
 
 Since cv25519 cannot be used as primary key, you need to merge the generated key with an existing key:
