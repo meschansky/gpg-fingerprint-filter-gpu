@@ -1,8 +1,10 @@
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 
 #include <csignal>
 #include <cstring>
@@ -49,6 +51,57 @@ static void merge_resume_config(
         config.batch_mode = checkpoint_config.batch_mode;
 }
 
+static std::string format_duration(std::uint64_t elapsed_ns) {
+    const double seconds = elapsed_ns / 1000000000.0;
+    std::ostringstream out;
+
+    if (seconds < 60.0) {
+        out << std::fixed << std::setprecision(2) << seconds << "s";
+        return out.str();
+    }
+
+    const auto total_seconds = static_cast<std::uint64_t>(seconds);
+    const auto hours = total_seconds / 3600;
+    const auto minutes = (total_seconds % 3600) / 60;
+    const auto secs = total_seconds % 60;
+
+    if (hours > 0)
+        out << hours << "h ";
+    if (hours > 0 || minutes > 0)
+        out << minutes << "m ";
+    out << secs << "s";
+    return out.str();
+}
+
+static double candidates_per_second(const RunStats &stats) {
+    if (stats.elapsed_ns == 0)
+        return 0.0;
+    return stats.total_candidates / (stats.elapsed_ns / 1000000000.0);
+}
+
+static void print_checkpoint_summary(
+        const char *title,
+        const std::string &path,
+        const CheckpointState &state) {
+    fprintf(stderr, "%s\n", title);
+    fprintf(stderr, "  checkpoint: %s\n", path.c_str());
+    fprintf(stderr, "  algorithm: %s\n", state.config.algorithm.c_str());
+    fprintf(stderr, "  prefix: %s\n",
+            state.config.prefix_pattern.empty() ? "(none)" : state.config.prefix_pattern.c_str());
+    fprintf(stderr, "  suffix: %s\n",
+            state.config.suffix_pattern.empty() ? "(none)" : state.config.suffix_pattern.c_str());
+    fprintf(stderr, "  output: %s\n", state.config.output.c_str());
+    fprintf(stderr, "  elapsed: %s\n", format_duration(state.stats.elapsed_ns).c_str());
+    fprintf(stderr, "  generated keys tested: %llu\n",
+            static_cast<unsigned long long>(state.stats.tested_keys));
+    fprintf(stderr, "  candidates searched: %llu\n",
+            static_cast<unsigned long long>(state.stats.total_candidates));
+    fprintf(stderr, "  matches found: %llu\n",
+            static_cast<unsigned long long>(state.stats.matches_found));
+    fprintf(stderr, "  average speed: %.4f hashes / sec\n", candidates_per_second(state.stats));
+    fprintf(stderr, "  active key saved: %s\n", state.has_active_key ? "yes" : "no");
+}
+
 int _main(const RunConfig &conf, const std::set<std::string> &explicit_args) {
     signal(SIGINT, signal_handler); 
     signal(SIGTERM, signal_handler); 
@@ -68,6 +121,10 @@ int _main(const RunConfig &conf, const std::set<std::string> &explicit_args) {
                 describe_resume_mismatch(merged, state.config));
         state.config.checkpoint_file = conf.checkpoint_file;
         state.config.checkpoint_interval = conf.checkpoint_interval;
+        print_checkpoint_summary("Resuming from checkpoint:", conf.checkpoint_file, state);
+    } else if (checkpoint.enabled()) {
+        fprintf(stderr, "Checkpointing enabled: %s (interval: %lus)\n",
+                conf.checkpoint_file.c_str(), conf.checkpoint_interval);
     }
 
     const int thread_per_block = state.config.thread_per_block;
@@ -82,9 +139,12 @@ int _main(const RunConfig &conf, const std::set<std::string> &explicit_args) {
     auto t0 = std::chrono::steady_clock::now() -
               std::chrono::nanoseconds(state.stats.elapsed_ns);
     std::unique_ptr<GPGKey> active_key;
+    std::chrono::steady_clock::time_point active_key_t0;
 
-    if (state.has_active_key)
+    if (state.has_active_key) {
         active_key.reset(new GPGKey(state.active_key));
+        active_key_t0 = std::chrono::steady_clock::now();
+    }
 
     while (true) {
         if (cleanup_flag) {
@@ -93,17 +153,20 @@ int _main(const RunConfig &conf, const std::set<std::string> &explicit_args) {
                 std::chrono::steady_clock::now() - t0).count();
             checkpoint.save(state, true);
             fprintf(stderr, "\nSignal caught! Let's exit...\n");
+            if (checkpoint.enabled())
+                print_checkpoint_summary("Checkpoint saved:", state.config.checkpoint_file, state);
             break;
         }
 
         if (!active_key) {
             active_key.reset(new GPGKey(key_worker.recv_key()));
+            active_key_t0 = std::chrono::steady_clock::now();
             state.has_active_key = true;
             state.active_key = active_key->snapshot();
             state.stats.total_candidates = count;
             state.stats.elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - t0).count();
-            checkpoint.save(state, true);
+            checkpoint.save(state, false);
         }
 
         manager.test_key(active_key->load_fpr_hash_packet());
@@ -124,11 +187,24 @@ int _main(const RunConfig &conf, const std::set<std::string> &explicit_args) {
 
             puts("\nResult found!");
             printf("GPG key written to %s\n", filename.c_str());
+            const auto match_elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - active_key_t0).count();
+            const auto match_offset = result_time <= state.config.base_time
+                ? state.config.base_time - result_time + 1
+                : result_time - state.config.base_time + 1;
+            const auto candidates_through_match = count + match_offset;
+            printf("Time spent on matching key in this run: %s\n",
+                   format_duration(match_elapsed_ns).c_str());
             state.stats.matches_found += 1;
-            state.stats.total_candidates = count;
+            state.stats.total_candidates = candidates_through_match;
             state.stats.elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - t0).count();
-            checkpoint.save(state, true);
+            printf("Total elapsed search time: %s\n", format_duration(state.stats.elapsed_ns).c_str());
+            printf("Matching key candidate position: %llu / %d\n",
+                   static_cast<unsigned long long>(match_offset), time_offset);
+            printf("Candidates searched through match: %llu\n",
+                   static_cast<unsigned long long>(state.stats.total_candidates));
+            checkpoint.save(state, false);
 
             if (!state.config.batch_mode) {
                 checkpoint.remove();
